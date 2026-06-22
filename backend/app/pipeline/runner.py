@@ -2,6 +2,7 @@
 features -> train -> persist. Industry-agnostic except for the single
 call into the registry-resolved pack.
 """
+from app.pipeline import deep_model as deep_model_mod
 from app.pipeline import eda as eda_mod
 from app.pipeline import features as features_mod
 from app.pipeline import models as models_mod
@@ -31,14 +32,27 @@ def run_pipeline(run_id: str, industry: str, file_paths: dict[str, str]) -> None
                 dataframes["transactions"], dataframes["customers"], segment_key_for_eda
             )
 
-        features_mod.build_features(dataframes)  # computed for future use; not yet fed to models below
+        features = features_mod.build_features(dataframes)
 
         txn = dataframes["transactions"]
         matrix, customers, products, cust_idx, prod_idx = models_mod.build_user_item_matrix(txn)
         als_model = models_mod.train_als(matrix)
         item_similarity = models_mod.item_based_cf_scores(matrix)
+
+        cust_feat, prod_feat = deep_model_mod.build_side_features(features, dataframes, customers, products)
+        deep_model = deep_model_mod.train_neural_model(matrix, cust_feat, prod_feat)
+
         personalized = models_mod.personalized_recommendations(
-            matrix, customers, products, cust_idx, prod_idx, als_model, item_similarity
+            matrix,
+            customers,
+            products,
+            cust_idx,
+            prod_idx,
+            als_model,
+            item_similarity,
+            deep_model=deep_model,
+            cust_feat=cust_feat,
+            prod_feat=prod_feat,
         )
         fbt = models_mod.association_rules_fbt(txn)
         segment_key = pack.popularity_segment_key(dataframes["customers"])

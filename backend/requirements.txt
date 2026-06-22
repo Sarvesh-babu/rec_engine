@@ -7,5 +7,6 @@ scipy
 scikit-learn
 implicit
 mlxtend
+torch
 openpyxl
 python-multipart

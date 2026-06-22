@@ -1,8 +1,11 @@
 """Model training for the three result types.
 
-personalized picks  -> ALS matrix factorization (implicit feedback), with
-                        item-based CF cosine-similarity fallback for users
-                        the ALS model can't confidently score (too few
+personalized picks  -> ALS matrix factorization (implicit feedback) shortlists
+                        candidates, re-ranked by a neural hybrid model
+                        (deep_model.py) blending learned embeddings with
+                        engineered side features when one was trained; falls
+                        back to item-based CF cosine-similarity for users the
+                        ALS model can't confidently score (too few
                         interactions), and popularity as the last resort.
 frequently bought together -> association rules (Apriori) over baskets.
 popularity fallback  -> frequency + recency weighted ranking, optionally
@@ -12,7 +15,11 @@ import numpy as np
 import pandas as pd
 from scipy.sparse import csr_matrix
 
+from app.pipeline import deep_model as deep_model_mod
+
 MIN_INTERACTIONS_FOR_ALS = 3
+DEEP_MODEL_WEIGHT = 0.5
+CANDIDATE_MULTIPLIER = 5
 
 
 def build_user_item_matrix(txn: pd.DataFrame):
@@ -46,8 +53,27 @@ def item_based_cf_scores(matrix: csr_matrix) -> csr_matrix:
     return similarity.tocsr()
 
 
+def _minmax(arr: np.ndarray) -> np.ndarray:
+    if len(arr) == 0:
+        return arr
+    lo, hi = arr.min(), arr.max()
+    if hi - lo < 1e-9:
+        return np.zeros_like(arr, dtype=float)
+    return (arr - lo) / (hi - lo)
+
+
 def personalized_recommendations(
-    matrix, customers, products, cust_idx, prod_idx, als_model, item_similarity, top_k: int = 10
+    matrix,
+    customers,
+    products,
+    cust_idx,
+    prod_idx,
+    als_model,
+    item_similarity,
+    deep_model=None,
+    cust_feat: np.ndarray | None = None,
+    prod_feat: np.ndarray | None = None,
+    top_k: int = 10,
 ) -> dict[str, list[str]]:
     results: dict[str, list[str]] = {}
     interaction_counts = np.asarray((matrix > 0).sum(axis=1)).ravel()
@@ -55,8 +81,17 @@ def personalized_recommendations(
     for customer, ci in cust_idx.items():
         n_interactions = interaction_counts[ci]
         if n_interactions >= MIN_INTERACTIONS_FOR_ALS:
-            item_ids, _scores = als_model.recommend(ci, matrix[ci], N=top_k, filter_already_liked_items=True)
-            results[customer] = [products[i] for i in item_ids]
+            candidate_n = min(top_k * CANDIDATE_MULTIPLIER, len(products))
+            item_ids, als_scores = als_model.recommend(
+                ci, matrix[ci], N=candidate_n, filter_already_liked_items=True
+            )
+            if deep_model is not None and len(item_ids):
+                deep_scores = deep_model_mod.score_items(deep_model, ci, item_ids, cust_feat, prod_feat)
+                blended = _minmax(als_scores) * (1 - DEEP_MODEL_WEIGHT) + _minmax(deep_scores) * DEEP_MODEL_WEIGHT
+                order = np.argsort(blended)[::-1][:top_k]
+                results[customer] = [products[item_ids[o]] for o in order]
+            else:
+                results[customer] = [products[i] for i in item_ids[:top_k]]
         elif n_interactions > 0:
             owned = matrix[ci].indices
             scores = np.asarray(item_similarity[owned].sum(axis=0)).ravel()
