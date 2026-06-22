@@ -4,7 +4,7 @@ product embeddings jointly with the side features computed in features.py
 sensitivity) -- the engineered features that were previously unused by any
 model. Trained on implicit feedback (observed purchases as positives,
 uniform-sampled un-owned items as negatives). Used to re-rank the ALS
-candidate list in models.personalized_recommendations, not as a standalone
+candidate list in models.PERSONALIZED_DISPATCH variants, not as a standalone
 source -- it has the same cold-start blind spot as ALS for very sparse
 customers, which the existing item-CF / popularity fallbacks already cover.
 """

@@ -62,9 +62,16 @@ def _ranked_metrics(
     return metrics
 
 
-def evaluate(dataframes: dict[str, pd.DataFrame], features: dict, top_k_values: list[int] = TOP_K_VALUES) -> dict | None:
+def evaluate(
+    dataframes: dict[str, pd.DataFrame],
+    features: dict,
+    top_k_values: list[int] = TOP_K_VALUES,
+    personalized_variant: str = "als_neural_hybrid",
+) -> dict | None:
     """Returns None when there isn't enough repeat-purchase history to
-    evaluate (e.g. every customer bought only one distinct product)."""
+    evaluate (e.g. every customer bought only one distinct product).
+    Evaluates whichever personalized variant was selected for the run, so
+    the reported metrics match what's actually served."""
     txn = dataframes["transactions"]
     train_txn, test_items = _temporal_holdout_split(txn)
     if not test_items or train_txn.empty:
@@ -77,7 +84,8 @@ def evaluate(dataframes: dict[str, pd.DataFrame], features: dict, top_k_values: 
     deep_model = deep_model_mod.train_neural_model(matrix, cust_feat, prod_feat)
 
     max_k = max(top_k_values)
-    personalized = models_mod.personalized_recommendations(
+    variant_fn = models_mod.PERSONALIZED_DISPATCH.get(personalized_variant, models_mod.personalized_als_neural_hybrid)
+    personalized = variant_fn(
         matrix,
         customers,
         products,
@@ -89,6 +97,7 @@ def evaluate(dataframes: dict[str, pd.DataFrame], features: dict, top_k_values: 
         cust_feat=cust_feat,
         prod_feat=prod_feat,
         top_k=max_k,
+        products_df=dataframes["products"],
     )
     model_metrics = _ranked_metrics(personalized, test_items, top_k_values)
 

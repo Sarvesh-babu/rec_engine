@@ -12,9 +12,15 @@ CATEGORIES = ["electronics", "apparel", "home", "grocery", "beauty"]
 BRANDS = ["acme", "globex", "initech", "umbrella", "stark"]
 SEGMENTS = ["budget", "regular", "premium"]
 
+SEARCH_TERMS = ["deal", "best", "cheap", "new", "review", "sale", "top rated", "gift"]
+
 N_CUSTOMERS = 60
 N_PRODUCTS = 40
 N_TRANSACTIONS = 800
+N_SESSIONS = 2000
+N_SEARCH_LOGS = 500
+RETURN_RATE = 0.06
+PROMO_PRODUCT_RATE = 0.25
 
 
 def generate():
@@ -69,10 +75,103 @@ def generate():
 
     transactions = pd.DataFrame(rows)
 
+    sessions = _generate_sessions(N_CUSTOMERS, N_PRODUCTS, start)
+    returns = _generate_returns(transactions)
+    search_logs = _generate_search_logs(N_CUSTOMERS, products, start)
+    promotions = _generate_promotions(products, start)
+
     customers.to_csv(OUT_DIR / "customers.csv", index=False)
     products.to_csv(OUT_DIR / "products.csv", index=False)
     transactions.to_csv(OUT_DIR / "transactions.csv", index=False)
-    print(f"Wrote {len(customers)} customers, {len(products)} products, {len(transactions)} transaction rows to {OUT_DIR}")
+    sessions.to_csv(OUT_DIR / "sessions.csv", index=False)
+    returns.to_csv(OUT_DIR / "returns.csv", index=False)
+    search_logs.to_csv(OUT_DIR / "search_logs.csv", index=False)
+    promotions.to_csv(OUT_DIR / "promotions.csv", index=False)
+
+    print(
+        f"Wrote {len(customers)} customers, {len(products)} products, {len(transactions)} transaction rows, "
+        f"{len(sessions)} session rows, {len(returns)} return rows, {len(search_logs)} search log rows, "
+        f"{len(promotions)} promotion rows to {OUT_DIR}"
+    )
+
+
+def _generate_sessions(n_customers: int, n_products: int, start: datetime) -> pd.DataFrame:
+    """Browsing events -- more frequent and noisier than purchases (most
+    viewed products are never bought)."""
+    rows = []
+    for s in range(N_SESSIONS):
+        cust = random.randrange(n_customers)
+        prod = random.randrange(n_products)
+        ts = start + timedelta(days=random.randint(0, 170), hours=random.randint(0, 23), minutes=random.randint(0, 59))
+        rows.append(
+            {
+                "session_id": f"S{s:05d}",
+                "customer_id": f"C{cust:04d}",
+                "product_id": f"P{prod:04d}",
+                "timestamp": ts.isoformat(),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _generate_returns(transactions: pd.DataFrame) -> pd.DataFrame:
+    """A small fraction of purchased line items get returned a few days later."""
+    sampled = transactions.sample(frac=RETURN_RATE, random_state=42)
+    rows = []
+    for _, txn in sampled.iterrows():
+        purchase_ts = datetime.fromisoformat(txn["timestamp"])
+        return_ts = purchase_ts + timedelta(days=random.randint(2, 21))
+        rows.append(
+            {
+                "transaction_id": txn["transaction_id"],
+                "product_id": txn["product_id"],
+                "customer_id": txn["customer_id"],
+                "return_date": return_ts.date().isoformat(),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _generate_search_logs(n_customers: int, products: pd.DataFrame, start: datetime) -> pd.DataFrame:
+    """Search queries built from category/brand vocabulary plus generic terms."""
+    rows = []
+    for q in range(N_SEARCH_LOGS):
+        cust = random.randrange(n_customers)
+        prod = products.iloc[random.randrange(len(products))]
+        query_kind = random.choice(["category", "brand", "term"])
+        if query_kind == "category":
+            query = prod["category"]
+        elif query_kind == "brand":
+            query = prod["brand"]
+        else:
+            query = f"{random.choice(SEARCH_TERMS)} {prod['category']}"
+        ts = start + timedelta(days=random.randint(0, 170), hours=random.randint(0, 23))
+        rows.append(
+            {
+                "customer_id": f"C{cust:04d}",
+                "query": query,
+                "timestamp": ts.isoformat(),
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def _generate_promotions(products: pd.DataFrame, start: datetime) -> pd.DataFrame:
+    """A subset of products run a discount campaign for a few weeks."""
+    promoted = products.sample(frac=PROMO_PRODUCT_RATE, random_state=7)
+    rows = []
+    for _, prod in promoted.iterrows():
+        promo_start = start + timedelta(days=random.randint(0, 140))
+        promo_end = promo_start + timedelta(days=random.randint(7, 28))
+        rows.append(
+            {
+                "product_id": prod["product_id"],
+                "discount_pct": random.choice([10, 15, 20, 25, 30]),
+                "start_date": promo_start.date().isoformat(),
+                "end_date": promo_end.date().isoformat(),
+            }
+        )
+    return pd.DataFrame(rows)
 
 
 if __name__ == "__main__":

@@ -36,3 +36,9 @@ OPTIONAL_COLUMNS = {
     "search_logs": ["customer_id", "query", "timestamp"],
     "promotions": ["product_id", "discount_pct", "start_date", "end_date"],
 }
+
+
+class TrainRequest(BaseModel):
+    personalized: Optional[str] = None
+    fbt: Optional[str] = None
+    popular: Optional[str] = None

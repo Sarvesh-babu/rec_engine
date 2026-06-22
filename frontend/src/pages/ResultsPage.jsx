@@ -16,6 +16,13 @@ export default function ResultsPage() {
           <p className="text-sm text-slate-500">Explore recommendations from this run.</p>
         </div>
         <div className="flex items-center gap-3">
+          {run?.model_config && (
+            <span className="text-xs text-slate-400">
+              {Object.entries(run.model_config)
+                .map(([category, name]) => `${category}: ${name}`)
+                .join(" · ")}
+            </span>
+          )}
           <code className="text-xs text-slate-400">{runId}</code>
           <button
             onClick={() => navigate("/upload")}

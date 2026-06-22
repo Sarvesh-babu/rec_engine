@@ -6,10 +6,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
 from app.config import OPTIONAL_FILES, REQUIRED_FILES, RUNS_DIR, TOP_K_DEFAULT
+from app.pipeline import models as models_mod
 from app.pipeline import store
 from app.pipeline.export import write_excel_export
 from app.pipeline.runner import prepare_run, train_models
 from app.registry import available_industries
+from app.schemas import TrainRequest
 
 app = FastAPI(title="Recommendation Accelerator")
 app.add_middleware(
@@ -76,18 +78,39 @@ async def upload_and_validate(
     return {"run_id": run_id, "status": "validating"}
 
 
+@app.get("/model-options")
+def model_options():
+    return {
+        "personalized": models_mod.PERSONALIZED_MODEL_OPTIONS,
+        "fbt": models_mod.FBT_MODEL_OPTIONS,
+        "popular": models_mod.POPULAR_MODEL_OPTIONS,
+    }
+
+
 @app.post("/pipeline/train/{run_id}")
-def start_training(run_id: str, background_tasks: BackgroundTasks):
+def start_training(run_id: str, background_tasks: BackgroundTasks, model_config: TrainRequest | None = None):
     """Phase 2: train ALS + neural hybrid + FBT + popularity, and run the
-    offline evaluation. Requires phase 1 (EDA) to have completed first."""
+    offline evaluation. Requires phase 1 (EDA) to have completed first.
+    Optionally accepts a JSON body selecting which algorithm variant to use
+    per category -- see GET /model-options for valid names."""
     run = store.get_run(run_id)
     if not run:
         raise HTTPException(404, f"Unknown run_id '{run_id}'")
     if run["status"] != "eda_ready":
         raise HTTPException(409, f"Run '{run_id}' is not ready for training (status={run['status']})")
 
+    dispatches = {
+        "personalized": models_mod.PERSONALIZED_DISPATCH,
+        "fbt": models_mod.FBT_DISPATCH,
+        "popular": models_mod.POPULAR_DISPATCH,
+    }
+    config_dict = model_config.model_dump(exclude_none=True) if model_config else {}
+    for category, name in config_dict.items():
+        if name not in dispatches[category]:
+            raise HTTPException(400, f"Unknown '{category}' model variant '{name}'")
+
     file_paths = _file_paths_for_run(run_id)
-    background_tasks.add_task(train_models, run_id, run["industry"], file_paths)
+    background_tasks.add_task(train_models, run_id, run["industry"], file_paths, config_dict or None)
     return {"run_id": run_id, "status": "training"}
 
 

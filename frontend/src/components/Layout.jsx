@@ -1,0 +1,102 @@
+import { useState } from "react";
+import { useLocation, useNavigate } from "react-router-dom";
+
+const NAV_ITEMS = [
+  {
+    label: "Upload",
+    description: "Upload your transactions, customers, and products (plus optional sessions, returns, search logs, and promotions), and validate the schema.",
+    path: () => "/upload",
+    needsRun: false,
+  },
+  {
+    label: "Review data (EDA)",
+    description: "Inspect distributions and data quality across all uploaded files before training starts.",
+    path: (runId) => `/eda/${runId}`,
+    needsRun: true,
+  },
+  {
+    label: "Model settings",
+    description: "Choose which algorithm runs for personalized, frequently-bought-together, and popular recommendations before training.",
+    path: (runId) => `/models/${runId}`,
+    needsRun: true,
+  },
+  {
+    label: "Results",
+    description: "Browse personalized recommendations produced by the trained models for this run.",
+    path: (runId) => `/results/${runId}`,
+    needsRun: true,
+  },
+  {
+    label: "Validation",
+    description: "Offline precision/recall/hit-rate@k metrics, compared against a popularity baseline.",
+    path: (runId) => `/validation/${runId}`,
+    needsRun: true,
+  },
+];
+
+function currentRunId(pathname) {
+  const match = pathname.match(/^\/(?:eda|models|results|validation)\/([^/]+)/);
+  return match ? match[1] : null;
+}
+
+export default function Layout({ children }) {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [collapsed, setCollapsed] = useState(false);
+  const runId = currentRunId(location.pathname);
+
+  return (
+    <div className="min-h-screen flex">
+      <aside
+        className={`shrink-0 border-r border-sky-100/80 bg-white/70 backdrop-blur transition-all ${
+          collapsed ? "w-12" : "w-64"
+        }`}
+      >
+        <div className="flex items-center justify-between px-3 py-4">
+          {!collapsed && <span className="text-sm font-semibold text-slate-800">Menu</span>}
+          <button
+            onClick={() => setCollapsed((c) => !c)}
+            className="text-slate-400 hover:text-slate-600 text-sm px-1"
+            aria-label="Toggle menu"
+            title={collapsed ? "Expand menu" : "Collapse menu"}
+          >
+            {collapsed ? "»" : "«"}
+          </button>
+        </div>
+
+        {!collapsed && (
+          <nav className="px-3 space-y-1.5 pb-6">
+            {NAV_ITEMS.map((item) => {
+              const disabled = item.needsRun && !runId;
+              const target = item.path(runId);
+              const active = location.pathname.startsWith(target.split("/").slice(0, 2).join("/"));
+              return (
+                <div key={item.label} className="group relative">
+                  <button
+                    disabled={disabled}
+                    onClick={() => navigate(target)}
+                    className={`w-full text-left rounded-md px-3 py-2 text-sm transition ${
+                      disabled
+                        ? "text-slate-300 cursor-not-allowed"
+                        : active
+                        ? "bg-sky-100 text-sky-800 font-medium"
+                        : "text-slate-600 hover:bg-sky-50 hover:text-sky-700"
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                  <div className="pointer-events-none absolute left-full top-0 ml-2 w-56 rounded-md bg-slate-800 text-white text-xs px-3 py-2 opacity-0 group-hover:opacity-100 transition z-10 shadow-lg">
+                    {item.description}
+                    {disabled && <p className="mt-1 text-slate-300">Start an upload run to unlock this page.</p>}
+                  </div>
+                </div>
+              );
+            })}
+          </nav>
+        )}
+      </aside>
+
+      <div className="flex-1 min-w-0">{children}</div>
+    </div>
+  );
+}

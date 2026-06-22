@@ -34,7 +34,8 @@ def init_db() -> None:
                 computed_at TEXT,
                 error TEXT,
                 eda_json TEXT,
-                metrics_json TEXT
+                metrics_json TEXT,
+                model_config_json TEXT
             );
             CREATE TABLE IF NOT EXISTS personalized (
                 run_id TEXT, customer_id TEXT, items_json TEXT,
@@ -52,6 +53,10 @@ def init_db() -> None:
         )
         try:
             conn.execute("ALTER TABLE runs ADD COLUMN metrics_json TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists (pre-existing db file)
+        try:
+            conn.execute("ALTER TABLE runs ADD COLUMN model_config_json TEXT")
         except sqlite3.OperationalError:
             pass  # column already exists (pre-existing db file)
 
@@ -72,9 +77,12 @@ def mark_eda_ready(run_id: str, eda: dict) -> None:
         )
 
 
-def mark_training_started(run_id: str) -> None:
+def mark_training_started(run_id: str, model_config: dict | None = None) -> None:
     with _conn() as conn:
-        conn.execute("UPDATE runs SET status='training' WHERE run_id=?", (run_id,))
+        conn.execute(
+            "UPDATE runs SET status='training', model_config_json=? WHERE run_id=?",
+            (json.dumps(model_config) if model_config else None, run_id),
+        )
 
 
 def mark_training_completed(run_id: str, metrics: dict | None) -> None:
@@ -96,7 +104,8 @@ def mark_run_failed(run_id: str, error: str) -> None:
 def get_run(run_id: str) -> dict | None:
     with _conn() as conn:
         row = conn.execute(
-            "SELECT run_id, industry, status, computed_at, error, eda_json, metrics_json FROM runs WHERE run_id=?",
+            "SELECT run_id, industry, status, computed_at, error, eda_json, metrics_json, model_config_json "
+            "FROM runs WHERE run_id=?",
             (run_id,),
         ).fetchone()
     if not row:
@@ -109,6 +118,7 @@ def get_run(run_id: str) -> dict | None:
         "error": row[4],
         "eda": json.loads(row[5]) if row[5] else None,
         "metrics": json.loads(row[6]) if row[6] else None,
+        "model_config": json.loads(row[7]) if row[7] else None,
     }
 
 

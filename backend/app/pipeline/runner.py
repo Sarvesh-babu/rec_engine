@@ -44,8 +44,16 @@ def prepare_run(run_id: str, industry: str, file_paths: dict[str, str]) -> None:
         store.mark_run_failed(run_id, f"{type(e).__name__}: {e}")
 
 
-def train_models(run_id: str, industry: str, file_paths: dict[str, str]) -> None:
-    store.mark_training_started(run_id)
+def _resolve_variant(model_config: dict | None, category: str, dispatch: dict, options: list[dict]) -> str:
+    default_name = next(opt["name"] for opt in options if opt["default"])
+    if not model_config:
+        return default_name
+    name = model_config.get(category)
+    return name if name in dispatch else default_name
+
+
+def train_models(run_id: str, industry: str, file_paths: dict[str, str], model_config: dict | None = None) -> None:
+    store.mark_training_started(run_id, model_config)
     try:
         pack = get_pack(industry)
         dataframes = load_uploaded_files(file_paths)
@@ -59,7 +67,10 @@ def train_models(run_id: str, industry: str, file_paths: dict[str, str]) -> None
         cust_feat, prod_feat = deep_model_mod.build_side_features(features, dataframes, customers, products)
         deep_model = deep_model_mod.train_neural_model(matrix, cust_feat, prod_feat)
 
-        personalized = models_mod.personalized_recommendations(
+        personalized_variant = _resolve_variant(
+            model_config, "personalized", models_mod.PERSONALIZED_DISPATCH, models_mod.PERSONALIZED_MODEL_OPTIONS
+        )
+        personalized = models_mod.PERSONALIZED_DISPATCH[personalized_variant](
             matrix,
             customers,
             products,
@@ -70,11 +81,19 @@ def train_models(run_id: str, industry: str, file_paths: dict[str, str]) -> None
             deep_model=deep_model,
             cust_feat=cust_feat,
             prod_feat=prod_feat,
+            products_df=dataframes["products"],
         )
-        fbt = models_mod.association_rules_fbt(txn)
+
+        fbt_variant = _resolve_variant(model_config, "fbt", models_mod.FBT_DISPATCH, models_mod.FBT_MODEL_OPTIONS)
+        fbt = models_mod.FBT_DISPATCH[fbt_variant](txn)
+
+        popular_variant = _resolve_variant(
+            model_config, "popular", models_mod.POPULAR_DISPATCH, models_mod.POPULAR_MODEL_OPTIONS
+        )
         segment_key = pack.popularity_segment_key(dataframes["customers"])
-        popularity = models_mod.popularity_ranking(txn, dataframes["customers"], segment_key)
-        metrics = evaluation_mod.evaluate(dataframes, features)
+        popularity = models_mod.POPULAR_DISPATCH[popular_variant](txn, dataframes["customers"], segment_key)
+
+        metrics = evaluation_mod.evaluate(dataframes, features, personalized_variant=personalized_variant)
 
         store.write_personalized(run_id, personalized)
         store.write_fbt(run_id, fbt)

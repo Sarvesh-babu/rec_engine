@@ -23,8 +23,16 @@ export function uploadAndValidate(industry, files) {
   }).then(asJson);
 }
 
-export function startTraining(runId) {
-  return fetch(`${BASE}/pipeline/train/${runId}`, { method: "POST" }).then(asJson);
+export function getModelOptions() {
+  return fetch(`${BASE}/model-options`).then(asJson);
+}
+
+export function startTraining(runId, modelConfig) {
+  return fetch(`${BASE}/pipeline/train/${runId}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(modelConfig || {}),
+  }).then(asJson);
 }
 
 export function getRunStatus(runId) {
