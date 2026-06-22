@@ -12,19 +12,27 @@ export function listIndustries() {
   return fetch(`${BASE}/industries`).then(asJson);
 }
 
-export function startPipelineRun(industry, files) {
+export function uploadAndValidate(industry, files) {
   const form = new FormData();
   for (const [name, file] of Object.entries(files)) {
     if (file) form.append(name, file);
   }
-  return fetch(`${BASE}/pipeline/run?industry=${encodeURIComponent(industry)}`, {
+  return fetch(`${BASE}/pipeline/upload?industry=${encodeURIComponent(industry)}`, {
     method: "POST",
     body: form,
   }).then(asJson);
 }
 
+export function startTraining(runId) {
+  return fetch(`${BASE}/pipeline/train/${runId}`, { method: "POST" }).then(asJson);
+}
+
 export function getRunStatus(runId) {
   return fetch(`${BASE}/pipeline/status/${runId}`).then(asJson);
+}
+
+export function getMetrics(runId) {
+  return fetch(`${BASE}/pipeline/metrics/${runId}`).then(asJson);
 }
 
 export function getEda(runId) {

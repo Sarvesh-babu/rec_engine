@@ -33,7 +33,8 @@ def init_db() -> None:
                 status TEXT,
                 computed_at TEXT,
                 error TEXT,
-                eda_json TEXT
+                eda_json TEXT,
+                metrics_json TEXT
             );
             CREATE TABLE IF NOT EXISTS personalized (
                 run_id TEXT, customer_id TEXT, items_json TEXT,
@@ -49,21 +50,38 @@ def init_db() -> None:
             );
             """
         )
+        try:
+            conn.execute("ALTER TABLE runs ADD COLUMN metrics_json TEXT")
+        except sqlite3.OperationalError:
+            pass  # column already exists (pre-existing db file)
 
 
 def create_run(run_id: str, industry: str) -> None:
     with _conn() as conn:
         conn.execute(
-            "INSERT INTO runs (run_id, industry, status, computed_at) VALUES (?, ?, 'running', ?)",
+            "INSERT INTO runs (run_id, industry, status, computed_at) VALUES (?, ?, 'validating', ?)",
             (run_id, industry, datetime.now(timezone.utc).isoformat()),
         )
 
 
-def mark_run_completed(run_id: str, eda: dict) -> None:
+def mark_eda_ready(run_id: str, eda: dict) -> None:
     with _conn() as conn:
         conn.execute(
-            "UPDATE runs SET status='completed', computed_at=?, eda_json=? WHERE run_id=?",
+            "UPDATE runs SET status='eda_ready', computed_at=?, eda_json=? WHERE run_id=?",
             (datetime.now(timezone.utc).isoformat(), json.dumps(eda), run_id),
+        )
+
+
+def mark_training_started(run_id: str) -> None:
+    with _conn() as conn:
+        conn.execute("UPDATE runs SET status='training' WHERE run_id=?", (run_id,))
+
+
+def mark_training_completed(run_id: str, metrics: dict | None) -> None:
+    with _conn() as conn:
+        conn.execute(
+            "UPDATE runs SET status='completed', computed_at=?, metrics_json=? WHERE run_id=?",
+            (datetime.now(timezone.utc).isoformat(), json.dumps(metrics) if metrics else None, run_id),
         )
 
 
@@ -78,7 +96,8 @@ def mark_run_failed(run_id: str, error: str) -> None:
 def get_run(run_id: str) -> dict | None:
     with _conn() as conn:
         row = conn.execute(
-            "SELECT run_id, industry, status, computed_at, error, eda_json FROM runs WHERE run_id=?", (run_id,)
+            "SELECT run_id, industry, status, computed_at, error, eda_json, metrics_json FROM runs WHERE run_id=?",
+            (run_id,),
         ).fetchone()
     if not row:
         return None
@@ -89,6 +108,7 @@ def get_run(run_id: str) -> dict | None:
         "computed_at": row[3],
         "error": row[4],
         "eda": json.loads(row[5]) if row[5] else None,
+        "metrics": json.loads(row[6]) if row[6] else None,
     }
 
 

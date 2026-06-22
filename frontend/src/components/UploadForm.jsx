@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { listIndustries, startPipelineRun } from "../api";
+import { listIndustries, uploadAndValidate } from "../api";
 
 const REQUIRED_FILES = ["transactions", "customers", "products"];
 const OPTIONAL_FILES = ["sessions", "returns", "search_logs", "promotions"];
@@ -31,7 +31,7 @@ export default function UploadForm({ onRunStarted }) {
     setError(null);
     setSubmitting(true);
     try {
-      const result = await startPipelineRun(industry, files);
+      const result = await uploadAndValidate(industry, files);
       onRunStarted(result.run_id);
     } catch (err) {
       setError(err.message);
@@ -78,7 +78,7 @@ export default function UploadForm({ onRunStarted }) {
         disabled={missingRequired.length > 0 || submitting}
         className="w-full rounded-md bg-gradient-to-r from-sky-600 to-cyan-500 hover:from-sky-500 hover:to-cyan-400 text-white disabled:opacity-40 disabled:cursor-not-allowed px-4 py-2 text-sm font-medium transition shadow-sm"
       >
-        {submitting ? "Starting run..." : "Start pipeline run"}
+        {submitting ? "Uploading..." : "Upload & validate"}
       </button>
       {missingRequired.length > 0 && (
         <p className="text-xs text-slate-500">Missing required: {missingRequired.join(", ")}</p>

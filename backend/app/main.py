@@ -8,7 +8,7 @@ from fastapi.responses import FileResponse
 from app.config import OPTIONAL_FILES, REQUIRED_FILES, RUNS_DIR, TOP_K_DEFAULT
 from app.pipeline import store
 from app.pipeline.export import write_excel_export
-from app.pipeline.runner import run_pipeline
+from app.pipeline.runner import prepare_run, train_models
 from app.registry import available_industries
 
 app = FastAPI(title="Recommendation Accelerator")
@@ -26,8 +26,18 @@ def list_industries():
     return {"industries": available_industries()}
 
 
-@app.post("/pipeline/run")
-async def start_pipeline_run(
+def _file_paths_for_run(run_id: str) -> dict[str, str]:
+    run_dir = RUNS_DIR / run_id
+    file_paths: dict[str, str] = {}
+    for name in [*REQUIRED_FILES, *OPTIONAL_FILES]:
+        path = run_dir / f"{name}.csv"
+        if path.exists():
+            file_paths[name] = str(path)
+    return file_paths
+
+
+@app.post("/pipeline/upload")
+async def upload_and_validate(
     background_tasks: BackgroundTasks,
     industry: str,
     transactions: UploadFile = File(...),
@@ -38,6 +48,8 @@ async def start_pipeline_run(
     search_logs: UploadFile | None = File(None),
     promotions: UploadFile | None = File(None),
 ):
+    """Phase 1: save uploads, validate, and compute EDA. Does not train
+    models -- call POST /pipeline/train/{run_id} once the EDA looks good."""
     run_id = uuid.uuid4().hex[:12]
     run_dir = RUNS_DIR / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -60,8 +72,23 @@ async def start_pipeline_run(
             shutil.copyfileobj(upload.file, f)
         file_paths[name] = str(dest)
 
-    background_tasks.add_task(run_pipeline, run_id, industry, file_paths)
-    return {"run_id": run_id, "status": "running"}
+    background_tasks.add_task(prepare_run, run_id, industry, file_paths)
+    return {"run_id": run_id, "status": "validating"}
+
+
+@app.post("/pipeline/train/{run_id}")
+def start_training(run_id: str, background_tasks: BackgroundTasks):
+    """Phase 2: train ALS + neural hybrid + FBT + popularity, and run the
+    offline evaluation. Requires phase 1 (EDA) to have completed first."""
+    run = store.get_run(run_id)
+    if not run:
+        raise HTTPException(404, f"Unknown run_id '{run_id}'")
+    if run["status"] != "eda_ready":
+        raise HTTPException(409, f"Run '{run_id}' is not ready for training (status={run['status']})")
+
+    file_paths = _file_paths_for_run(run_id)
+    background_tasks.add_task(train_models, run_id, run["industry"], file_paths)
+    return {"run_id": run_id, "status": "training"}
 
 
 @app.get("/pipeline/status/{run_id}")
@@ -70,6 +97,18 @@ def pipeline_status(run_id: str):
     if not run:
         raise HTTPException(404, f"Unknown run_id '{run_id}'")
     return run
+
+
+@app.get("/pipeline/metrics/{run_id}")
+def pipeline_metrics(run_id: str):
+    run = store.get_run(run_id)
+    if not run:
+        raise HTTPException(404, f"Unknown run_id '{run_id}'")
+    if run["status"] != "completed":
+        raise HTTPException(409, f"Run '{run_id}' is not completed (status={run['status']})")
+    if not run.get("metrics"):
+        raise HTTPException(404, f"No evaluation metrics available for run '{run_id}'")
+    return {"run_id": run_id, "computed_at": run["computed_at"], **run["metrics"]}
 
 
 def _resolve_run_id(run_id: str | None) -> str:

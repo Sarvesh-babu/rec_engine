@@ -1,9 +1,14 @@
-"""Orchestrates one end-to-end pipeline run: ingest -> validate -> EDA ->
-features -> train -> persist. Industry-agnostic except for the single
-call into the registry-resolved pack.
+"""Orchestrates a pipeline run in two phases so the UI can show EDA before
+committing to (slower) model training:
+
+  prepare_run -> ingest -> validate -> EDA                  (status: eda_ready)
+  train_models -> features -> train -> evaluate -> persist  (status: completed)
+
+Industry-agnostic except for the single call into the registry-resolved pack.
 """
 from app.pipeline import deep_model as deep_model_mod
 from app.pipeline import eda as eda_mod
+from app.pipeline import evaluation as evaluation_mod
 from app.pipeline import features as features_mod
 from app.pipeline import models as models_mod
 from app.pipeline import store
@@ -11,7 +16,7 @@ from app.pipeline.ingestion import ValidationError, load_uploaded_files
 from app.registry import get_pack
 
 
-def run_pipeline(run_id: str, industry: str, file_paths: dict[str, str]) -> None:
+def prepare_run(run_id: str, industry: str, file_paths: dict[str, str]) -> None:
     store.create_run(run_id, industry)
     try:
         pack = get_pack(industry)
@@ -32,6 +37,18 @@ def run_pipeline(run_id: str, industry: str, file_paths: dict[str, str]) -> None
                 dataframes["transactions"], dataframes["customers"], segment_key_for_eda
             )
 
+        store.mark_eda_ready(run_id, eda_summary)
+    except ValidationError as e:
+        store.mark_run_failed(run_id, str(e))
+    except Exception as e:  # surfaced via GET /pipeline/status, not swallowed
+        store.mark_run_failed(run_id, f"{type(e).__name__}: {e}")
+
+
+def train_models(run_id: str, industry: str, file_paths: dict[str, str]) -> None:
+    store.mark_training_started(run_id)
+    try:
+        pack = get_pack(industry)
+        dataframes = load_uploaded_files(file_paths)
         features = features_mod.build_features(dataframes)
 
         txn = dataframes["transactions"]
@@ -57,11 +74,12 @@ def run_pipeline(run_id: str, industry: str, file_paths: dict[str, str]) -> None
         fbt = models_mod.association_rules_fbt(txn)
         segment_key = pack.popularity_segment_key(dataframes["customers"])
         popularity = models_mod.popularity_ranking(txn, dataframes["customers"], segment_key)
+        metrics = evaluation_mod.evaluate(dataframes, features)
 
         store.write_personalized(run_id, personalized)
         store.write_fbt(run_id, fbt)
         store.write_popularity(run_id, popularity)
-        store.mark_run_completed(run_id, eda_summary)
+        store.mark_training_completed(run_id, metrics)
     except ValidationError as e:
         store.mark_run_failed(run_id, str(e))
     except Exception as e:  # surfaced via GET /pipeline/status, not swallowed
