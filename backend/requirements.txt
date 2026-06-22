@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pydantic
+pandas
+numpy
+scipy
+scikit-learn
+implicit
+mlxtend
+openpyxl
+python-multipart
